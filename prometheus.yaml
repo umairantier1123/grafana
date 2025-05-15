@@ -1,0 +1,16 @@
+global:
+  scrape_interval: 1m
+
+scrape_configs:
+  - job_name: 'prometheus'
+    scrape_interval: 1m
+    static_configs:
+      - targets: ['localhost:9090']
+  - job_name: 'bitcoin'
+    static_configs:
+      - targets: ['bitcoind-exporter:9332']
+        labels:
+          app: bitcoin
+  - job_name: 'node'
+    static_configs:
+      - targets: ['node-exporter:9100', 'localhost:9090', 'cadvisor:9280', 'nginx-exporter:9113']

@@ -1,0 +1,153 @@
+networks:
+  loki:
+
+volumes:
+  prometheus_data: {}
+
+services:
+  btc_exporter:
+    image: jvstein/bitcoin-prometheus-exporter
+    container_name: bitcoind-exporter
+    ports:
+      - "9332:9332"
+    networks:
+      - loki
+    environment:
+      BITCOIN_RPC_HOST: 192.168.10.12
+      BITCOIN_RPC_PORT: 18332 
+      BITCOIN_RPC_USER: "stagebtcmaster"
+      BITCOIN_RPC_PASSWORD: "MakdfymnGadssghdnsaq4LDDFFSSvvJAQpLeAR"
+        #BITCOIN_CONF_PATH: /etc/bitcoin/bitcoin.conf
+      REFRESH_SECONDS: 1
+      LOG_LEVEL: "INFO"
+        # volumes:
+        #- /home/user/.bitcoin/bitcoin.conf:/etc/bitcoin/bitcoin.conf:rw
+  cadvisor:
+    image: gcr.io/cadvisor/cadvisor:v0.47.0
+    container_name: cadvisor
+    restart: unless-stopped
+    privileged: true
+    ports:
+      - "8081:8080"
+    environment:
+      - CAdvisor_USERNAME=cadvisor_user   # Add cAdvisor username
+      - CAdvisor_PASSWORD=cadvisor_pass   # Add cAdvisor password
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    networks:
+      - loki
+    deploy:
+      resources:
+        limits:
+          cpus: "0.2"
+          memory: "256M"
+        reservations:
+          cpus: "0.1"
+          memory: "128M"
+  node-exporter:
+    image: prom/node-exporter:latest
+    container_name: node-exporter
+    restart: unless-stopped
+    volumes:
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/rootfs:ro
+    command:
+      - '--path.procfs=/host/proc'
+      - '--path.rootfs=/rootfs'
+      - '--path.sysfs=/host/sys'
+      - '--collector.filesystem.mount-points-exclude=^/(sys|proc|dev|host|etc)($$|/)'
+    ports:
+      - 9100:9100
+    networks:
+      - loki
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    restart: unless-stopped
+    volumes:
+      - ./prometheus.yaml:/etc/prometheus/prometheus.yml
+      - prometheus_data:/prometheus
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+      - '--web.console.libraries=/etc/prometheus/console_libraries'
+      - '--web.console.templates=/etc/prometheus/consoles'
+      - '--web.enable-lifecycle'
+    ports:
+      - 9090:9090
+    networks:
+      - loki
+    links:
+      - cadvisor:cadvisor
+      - node-exporter:node-exporter
+
+  loki:
+    image: grafana/loki:2.9.2
+    container_name: loki
+    ports:
+      - "4100:3100"
+    command:
+      - '-config.file=/etc/loki/local-config.yaml'
+    networks:
+      - loki
+
+  promtail:
+    image: grafana/promtail:2.9.2
+    container_name: promtail
+    volumes:
+      - /var/log:/var/log
+      - ./promtail-config.yaml:/etc/promtail/config.yml
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /etc/localtime:/etc/localtime:ro
+      - /data/.bitcoin:/data/.bitcoin:ro
+    command:
+      - '-config.file=/etc/promtail/config.yml'
+    networks:
+      - loki
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    environment:
+      - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
+      - GF_AUTH_ANONYMOUS_ENABLED=true
+      - GF_AUTH_ANONYMOUS_ORG_ROLE=Admin
+    entrypoint:
+      - sh
+      - -euc
+      - |
+        mkdir -p /etc/grafana/provisioning/datasources
+        cat <<EOF > /etc/grafana/provisioning/datasources/ds.yaml
+        apiVersion: 1
+        datasources:
+        - name: Prometheus
+          type: prometheus
+          access: proxy
+          orgId: 1
+          url: http://prometheus:9090
+          basicAuth: false
+          isDefault: false
+          editable: false
+        - name: Loki
+          type: loki
+          access: proxy 
+          orgId: 1
+          url: http://loki:3100
+          basicAuth: false
+          isDefault: true
+          version: 1
+          editable: false
+        EOF
+        /run.sh
+    ports:
+      - "4000:3000"
+    networks:
+      - loki
+
